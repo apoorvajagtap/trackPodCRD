@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -8,11 +9,15 @@ import (
 	kInformer "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com/v1"
 	klientLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 )
 
 type Controller struct {
+	// K8s clientset
+	client kubernetes.Interface
+
 	// things required for controller:
 	// - clientset for custom resource
 	klient klientset.Interface
@@ -24,8 +29,9 @@ type Controller struct {
 	wq workqueue.RateLimitingInterface
 }
 
-func NewController(klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
+func NewController(client kubernetes.Interface, klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
 	c := &Controller{
+		client:      client,
 		klient:      klient,
 		klusterSync: klusterInformer.Informer().HasSynced,
 		klister:     klusterInformer.Lister(),
@@ -82,16 +88,38 @@ func (c *Controller) processNextItem() bool {
 		return false
 	}
 	log.Printf("TrackPods spec that we have is %+v & name of tpod is: %s\n", tpod.Spec, tpod.Name)
-
 	return true
 }
 
 func (c *Controller) handleAdd(obj interface{}) {
+	// Should create pods using the spec details from the CR.
 	log.Println("handleAdd is here!!!")
 	c.wq.Add(obj)
+	if err := c.createPod(obj); err != nil {
+		log.Printf("Error while creating the pod: %s\n", err.Error())
+	} else {
+		log.Printf("Pod created successfully\n")
+	}
 }
 
 func (c *Controller) handleDel(obj interface{}) {
 	log.Println("handleDel is here!!")
 	c.wq.Done(obj)
+}
+
+func (c *Controller) createPod(obj interface{}) error {
+	// skipping handling err part for now. Gathered the tpod details.
+	key, _ := cache.MetaNamespaceKeyFunc(obj)
+	ns, name, _ := cache.SplitMetaNamespaceKey(key)
+	tpod, _ := c.klister.TrackPods(ns).Get(name)
+
+	fmt.Println("In the createPod ---->>> ", tpod)
+
+	// Trying to create the pod now.
+	// var (
+	// 	resp *api.Pod = &api.Pod{}
+	// 	w    watch.Interface
+	// )
+
+	return nil
 }

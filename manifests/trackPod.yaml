@@ -1,7 +1,7 @@
 apiVersion: aj.com/v1
 kind: TrackPod
 metadata:
-  name: first-tpod
+  name: seconf-tpod
 spec: 
-  message: "check 1"
-  count: 1
+  message: "checkinga gain"
+  count: 2
