@@ -68,9 +68,3 @@ func main() {
 		log.Printf("error running controller %s\n", err)
 	}
 }
-
-// if err := createPod(); err != nil {
-// 	log.Printf("Error while creating the pod: %s\n", err.Error())
-// } else {
-// 	log.Printf("Pod created successfully\n")
-// }
