@@ -14,9 +14,9 @@ import (
 	klientLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 )
@@ -50,8 +50,8 @@ type Controller struct {
 	wq workqueue.RateLimitingInterface
 
 	// to list pods:
-	podLister       corelisters.PodLister
-	podListerSynced cache.InformerSynced
+	// podLister       corelisters.PodLister
+	// podListerSynced cache.InformerSynced
 }
 
 func NewController(client kubernetes.Interface, klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
@@ -126,32 +126,54 @@ func (c *Controller) processNextItem() bool {
 // syncHandler monitors the current state & if current != desired,
 // tries to meet the desired state.
 func (c *Controller) syncHandler(tpod *v1.TrackPod) error {
-	// Check if current count of pods == tpod.spec.count or not
-	// labelSelector := metav1.LabelSelector{
-	// 	MatchLabels: map[string]string{
-	// 		"controller": tpod.Name,
-	// 	},
-	// }
-	// listOptions := metav1.ListOptions{
-	// 	LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
-	// }
-	// podList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
+	var podCreate, podDelete bool
+	iterate := tpod.Spec.Count
 
-	// podList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), metav1.ListOptions{
-	// 	FieldSelector: "metadata.ownerReferences[0].kind=TrackPod",
-	// })
+	// filter out if required pods are already available or not:
+	labelSelector := metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"controller": tpod.Name,
+		},
+	}
+	listOptions := metav1.ListOptions{
+		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+	}
+	// TODO: Prefer using podLister to reduce the call to K8s API.
+	pList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
+
+	if len(pList.Items) < tpod.Spec.Count {
+		log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, len(pList.Items))
+		podCreate = true
+		iterate = tpod.Spec.Count - len(pList.Items)
+	} else if len(pList.Items) > tpod.Spec.Count {
+		log.Println("Deleting one of the extra pods")
+		podDelete = true
+	}
 
 	// Creates pod
-	for i := 0; i < tpod.Spec.Count; i++ {
-		nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
-		if err != nil {
-			return err
+	if podCreate {
+		for i := 0; i < iterate; i++ {
+			nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
+			if err != nil {
+				return err
+			}
+			log.Printf("Pod %v created successfully!\n", nPod.Name)
 		}
-		fmt.Printf("Pod %v created successfully!\n", nPod.Name)
+	}
+
+	// Delete extra pod
+	// TODO: Detect the manually created pod, and delete that specific pod.
+	if podDelete {
+		err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[0].Name, metav1.DeleteOptions{})
+		if err != nil {
+			log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
+		}
+		return err
 	}
 	return nil
 }
 
+// Creates the new pod with the specified template
 func newPod(tpod *v1.TrackPod) *corev1.Pod {
 	labels := map[string]string{
 		"controller": tpod.Name,
@@ -177,14 +199,8 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 }
 
 func (c *Controller) handleAdd(obj interface{}) {
-	// Should create pods using the spec details from the CR.
 	log.Println("handleAdd is here!!!")
 	c.wq.Add(obj)
-	// if err := c.createPod(obj); err != nil {
-	// 	log.Printf("Error while creating the pod: %s\n", err.Error())
-	// } else {
-	// 	log.Printf("Pod created successfully\n")
-	// }
 }
 
 func (c *Controller) handleDel(obj interface{}) {

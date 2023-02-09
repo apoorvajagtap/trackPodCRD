@@ -3,6 +3,7 @@ module github.com/apoorvajagtap/trackPodCRD
 go 1.19
 
 require (
+	cloud.google.com/go v0.65.0
 	k8s.io/api v0.26.1
 	k8s.io/apimachinery v0.26.1
 	k8s.io/client-go v0.26.1
