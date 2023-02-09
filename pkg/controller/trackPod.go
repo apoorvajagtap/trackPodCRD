@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
+	"strconv"
 	"time"
 
 	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
@@ -14,9 +16,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	appslisters "k8s.io/client-go/listers/apps/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -38,9 +39,6 @@ const (
 type Controller struct {
 	// K8s clientset
 	client kubernetes.Interface
-
-	deploymentsLister appslisters.DeploymentLister
-
 	// things required for controller:
 	// - clientset for custom resource
 	klient klientset.Interface
@@ -51,9 +49,9 @@ type Controller struct {
 	// - queue (my theory: deltafifo)
 	wq workqueue.RateLimitingInterface
 
-	// recorder is an event recorder for recording Event resources to the
-	// Kubernetes API.
-	recorder record.EventRecorder
+	// to list pods:
+	podLister       corelisters.PodLister
+	podListerSynced cache.InformerSynced
 }
 
 func NewController(client kubernetes.Interface, klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
@@ -128,12 +126,29 @@ func (c *Controller) processNextItem() bool {
 // syncHandler monitors the current state & if current != desired,
 // tries to meet the desired state.
 func (c *Controller) syncHandler(tpod *v1.TrackPod) error {
-	nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
+	// Check if current count of pods == tpod.spec.count or not
+	// labelSelector := metav1.LabelSelector{
+	// 	MatchLabels: map[string]string{
+	// 		"controller": tpod.Name,
+	// 	},
+	// }
+	// listOptions := metav1.ListOptions{
+	// 	LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+	// }
+	// podList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
 
-	fmt.Printf("Pod %v created successfully!\n", nPod)
+	// podList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), metav1.ListOptions{
+	// 	FieldSelector: "metadata.ownerReferences[0].kind=TrackPod",
+	// })
+
+	// Creates pod
+	for i := 0; i < tpod.Spec.Count; i++ {
+		nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Pod %v created successfully!\n", nPod.Name)
+	}
 	return nil
 }
 
@@ -144,7 +159,7 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:    labels,
-			Name:      tpod.Name,
+			Name:      fmt.Sprintf(tpod.Name + "-" + strconv.Itoa(rand.Intn(10000))),
 			Namespace: tpod.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tpod, v1.SchemeGroupVersion.WithKind("TrackPod")),
@@ -176,14 +191,3 @@ func (c *Controller) handleDel(obj interface{}) {
 	log.Println("handleDel is here!!")
 	c.wq.Done(obj)
 }
-
-// func (c *Controller) createPod(obj interface{}) error {
-// 	// skipping handling err part for now. Gathered the tpod details.
-// 	key, _ := cache.MetaNamespaceKeyFunc(obj)
-// 	ns, name, _ := cache.SplitMetaNamespaceKey(key)
-// 	tpod, _ := c.klister.TrackPods(ns).Get(name)
-
-// 	fmt.Println("In the createPod ---->>> ", tpod)
-
-// 	return nil
-// }

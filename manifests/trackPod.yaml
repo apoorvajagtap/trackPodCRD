@@ -4,4 +4,4 @@ metadata:
   name: seconf-tpod
 spec: 
   message: "checkinga gain"
-  count: 2
+  count: 1
