@@ -12,12 +12,15 @@ import (
 	klientset "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
 	kInformer "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com/v1"
 	klientLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"
+	"github.com/kanisterio/kanister/pkg/poll"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -52,6 +55,8 @@ type Controller struct {
 	// to list pods:
 	// podLister       corelisters.PodLister
 	// podListerSynced cache.InformerSynced
+
+	recorder record.EventRecorder
 }
 
 func NewController(client kubernetes.Interface, klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
@@ -115,20 +120,6 @@ func (c *Controller) processNextItem() bool {
 		return false
 	}
 
-	if err := c.syncHandler(tpod); err != nil {
-		log.Printf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
-		return false
-	}
-
-	return true
-}
-
-// syncHandler monitors the current state & if current != desired,
-// tries to meet the desired state.
-func (c *Controller) syncHandler(tpod *v1.TrackPod) error {
-	var podCreate, podDelete bool
-	iterate := tpod.Spec.Count
-
 	// filter out if required pods are already available or not:
 	labelSelector := metav1.LabelSelector{
 		MatchLabels: map[string]string{
@@ -141,42 +132,138 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod) error {
 	// TODO: Prefer using podLister to reduce the call to K8s API.
 	pList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
 
-	if len(pList.Items) < tpod.Spec.Count {
-		log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, len(pList.Items))
-		podCreate = true
-		iterate = tpod.Spec.Count - len(pList.Items)
-	} else if len(pList.Items) > tpod.Spec.Count {
-		log.Println("Deleting one of the extra pods")
-		podDelete = true
+	if err := c.syncHandler(tpod, pList); err != nil {
+		log.Printf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
+		return false
+	}
+	// c.recorder.Event(tpod, corev1.EventTypeNormal, "Podcreation", "called SynHandler")
+
+	fmt.Println("Calling updateStatus now!!")
+	err = c.updateStatus(tpod, "creating", pList)
+	if err != nil {
+		log.Printf("error %s, updating status of the TrackPod %s\n", err.Error(), tpod.Name)
 	}
 
-	// if any of the existing pod is in Terminating state, create the pod:
+	fmt.Println("calling wait for pods")
+	// wait for pods to be ready
+	err = c.waitForPods(tpod, pList)
+	if err != nil {
+		log.Printf("error %s, waiting for pods to meet the expected state", err.Error())
+	}
+
+	fmt.Println("Calling update status again!!")
+	err = c.updateStatus(tpod, "running", pList)
+	if err != nil {
+		log.Printf("error %s updating status after waiting for Pods", err.Error())
+	}
+
+	return true
+}
+
+// number of 'Running' pods
+func (c *Controller) totalRunningPods(tpod *v1.TrackPod) int {
+	labelSelector := metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"controller": tpod.Name,
+		},
+	}
+	listOptions := metav1.ListOptions{
+		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+	}
+	// TODO: Prefer using podLister to reduce the call to K8s API.
+	pList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
+
+	runningPods := 0
 	for _, pod := range pList.Items {
-		if pod.Status.Phase == "Terminating" {
-			podCreate = true
-			iterate = tpod.Spec.Count
+		if pod.ObjectMeta.DeletionTimestamp.IsZero() && pod.Status.Phase == "Running" {
+			runningPods++
 		}
+	}
+	return runningPods
+}
+
+// If the pod doesn't switch to a running state within 10 minutes, shall report the error.
+func (c *Controller) waitForPods(tpod *v1.TrackPod, pList *corev1.PodList) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	return poll.Wait(ctx, func(ctx context.Context) (bool, error) {
+		runningPods := c.totalRunningPods(tpod)
+		fmt.Println("Inside waitforPods ???? totalrunningPods >>>> ", runningPods)
+
+		if runningPods == tpod.Spec.Count {
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+// Updates the status section of TrackPod
+func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *corev1.PodList) error {
+	t, err := c.klient.AjV1().TrackPods(tpod.Namespace).Get(context.Background(), tpod.Name, metav1.GetOptions{})
+	trunningPods := c.totalRunningPods(tpod)
+	if err != nil {
+		return err
+	}
+
+	t.Status.Message = progress
+	t.Status.Count = trunningPods
+	fmt.Println("Inside updatestatus >>>>>>>>>>> ", trunningPods)
+	_, err = c.klient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
+
+	return err
+}
+
+// syncHandler monitors the current state & if current != desired,
+// tries to meet the desired state.
+func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error {
+	var podCreate, podDelete bool
+	iterate := tpod.Spec.Count
+	deleteIterate := 0
+	runningPods := c.totalRunningPods(tpod)
+	fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
+	fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
+
+	if runningPods < tpod.Spec.Count {
+		log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, runningPods)
+		podCreate = true
+		iterate = tpod.Spec.Count - runningPods
+	} else if runningPods > tpod.Spec.Count {
+		deleteIterate = runningPods - tpod.Spec.Count
+		log.Printf("Deleting %v extra pods\n", deleteIterate)
+		podDelete = true
 	}
 
 	// Creates pod
 	if podCreate {
+		// i := 0
 		for i := 0; i < iterate; i++ {
 			nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
 			if err != nil {
-				return err
+				if errors.IsAlreadyExists(err) {
+					// retry
+					iterate++
+				} else {
+					return err
+				}
 			}
-			log.Printf("Pod %v created successfully!\n", nPod.Name)
+			if nPod.Name != "" {
+				log.Printf("Pod %v created successfully!\n", nPod.Name)
+			}
 		}
 	}
 
 	// Delete extra pod
 	// TODO: Detect the manually created pod, and delete that specific pod.
 	if podDelete {
-		err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[0].Name, metav1.DeleteOptions{})
-		if err != nil {
-			log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
+		for i := 0; i < deleteIterate; i++ {
+			err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
+				return err
+			}
+			fmt.Println()
 		}
-		return err
 	}
 	return nil
 }
@@ -189,7 +276,7 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:    labels,
-			Name:      fmt.Sprintf(tpod.Name + "-" + strconv.Itoa(rand.Intn(10000))),
+			Name:      fmt.Sprintf(tpod.Name + "-" + strconv.Itoa(rand.Intn(10000000))),
 			Namespace: tpod.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tpod, v1.SchemeGroupVersion.WithKind("TrackPod")),
@@ -211,7 +298,7 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 					},
 					Args: []string{
 						"-c",
-						"while true; do echo '$(MESSAGE)'; sleep 100; done",
+						"while true; do echo '$(MESSAGE)'; sleep 10; done",
 					},
 				},
 			},
