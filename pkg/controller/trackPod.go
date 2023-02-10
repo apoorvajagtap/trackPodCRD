@@ -150,6 +150,14 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod) error {
 		podDelete = true
 	}
 
+	// if any of the existing pod is in Terminating state, create the pod:
+	for _, pod := range pList.Items {
+		if pod.Status.Phase == "Terminating" {
+			podCreate = true
+			iterate = tpod.Spec.Count
+		}
+	}
+
 	// Creates pod
 	if podCreate {
 		for i := 0; i < iterate; i++ {
@@ -192,6 +200,19 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 				{
 					Name:  "static-nginx",
 					Image: "nginx:latest",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "MESSAGE",
+							Value: tpod.Spec.Message,
+						},
+					},
+					Command: []string{
+						"/bin/sh",
+					},
+					Args: []string{
+						"-c",
+						"while true; do echo '$(MESSAGE)'; sleep 100; done",
+					},
 				},
 			},
 		},

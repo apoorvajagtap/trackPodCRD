@@ -10,8 +10,8 @@ type TrackPodSpec struct {
 }
 
 type TrackPodStatus struct {
-	Message string `json:"message"`
-	Count   int    `json:"count"`
+	Progress string `json:"message"`
+	Count    int    `json:"count"`
 }
 
 /*Adding following tag, because we want to generate ClientSet for following type*/
