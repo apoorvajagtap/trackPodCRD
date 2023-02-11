@@ -34,7 +34,7 @@ spec:
             status:
               type: object
               properties:
-                progress:
+                message:
                   type: string
                 count:
                   type: integer

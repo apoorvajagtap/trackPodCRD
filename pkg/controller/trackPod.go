@@ -138,11 +138,11 @@ func (c *Controller) processNextItem() bool {
 	}
 	// c.recorder.Event(tpod, corev1.EventTypeNormal, "Podcreation", "called SynHandler")
 
-	fmt.Println("Calling updateStatus now!!")
-	err = c.updateStatus(tpod, "creating", pList)
-	if err != nil {
-		log.Printf("error %s, updating status of the TrackPod %s\n", err.Error(), tpod.Name)
-	}
+	// fmt.Println("Calling updateStatus now!!")
+	// err = c.updateStatus(tpod, "creating", pList)
+	// if err != nil {
+	// 	log.Printf("error %s, updating status of the TrackPod %s\n", err.Error(), tpod.Name)
+	// }
 
 	fmt.Println("calling wait for pods")
 	// wait for pods to be ready
@@ -152,7 +152,7 @@ func (c *Controller) processNextItem() bool {
 	}
 
 	fmt.Println("Calling update status again!!")
-	err = c.updateStatus(tpod, "running", pList)
+	err = c.updateStatus(tpod, tpod.Spec.Message, pList)
 	if err != nil {
 		log.Printf("error %s updating status after waiting for Pods", err.Error())
 	}
@@ -160,7 +160,7 @@ func (c *Controller) processNextItem() bool {
 	return true
 }
 
-// number of 'Running' pods
+// total number of 'Running' pods
 func (c *Controller) totalRunningPods(tpod *v1.TrackPod) int {
 	labelSelector := metav1.LabelSelector{
 		MatchLabels: map[string]string{
@@ -206,9 +206,9 @@ func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *cor
 		return err
 	}
 
-	t.Status.Message = progress
 	t.Status.Count = trunningPods
-	fmt.Println("Inside updatestatus >>>>>>>>>>> ", trunningPods)
+	t.Status.Message = progress
+	fmt.Println("Inside updatestatus >>>>>>>>>>> ", t.Status.Message)
 	_, err = c.klient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
 
 	return err
@@ -224,14 +224,34 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
 	fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
 
-	if runningPods < tpod.Spec.Count {
-		log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, runningPods)
-		podCreate = true
-		iterate = tpod.Spec.Count - runningPods
+	if runningPods < tpod.Spec.Count || tpod.Spec.Message != tpod.Status.Message {
+		if tpod.Spec.Message != tpod.Status.Message {
+			podDelete = true
+			podCreate = true
+			iterate = tpod.Spec.Count
+			deleteIterate = tpod.Spec.Count
+		} else {
+			log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, runningPods)
+			podCreate = true
+			iterate = tpod.Spec.Count - runningPods
+		}
 	} else if runningPods > tpod.Spec.Count {
 		deleteIterate = runningPods - tpod.Spec.Count
 		log.Printf("Deleting %v extra pods\n", deleteIterate)
 		podDelete = true
+	}
+
+	// Delete extra pod
+	// TODO: Detect the manually created pod, and delete that specific pod.
+	if podDelete {
+		for i := 0; i < deleteIterate; i++ {
+			err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
+				return err
+			}
+			fmt.Println()
+		}
 	}
 
 	// Creates pod
@@ -253,18 +273,6 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 		}
 	}
 
-	// Delete extra pod
-	// TODO: Detect the manually created pod, and delete that specific pod.
-	if podDelete {
-		for i := 0; i < deleteIterate; i++ {
-			err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
-			if err != nil {
-				log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
-				return err
-			}
-			fmt.Println()
-		}
-	}
 	return nil
 }
 
