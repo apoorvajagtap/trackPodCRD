@@ -9,9 +9,9 @@ import (
 	"time"
 
 	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
-	klientset "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
-	kInformer "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com/v1"
-	klientLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"
+	tClientSet "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
+	tInformer "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com/v1"
+	tLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"
 	"github.com/kanisterio/kanister/pkg/poll"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -33,44 +32,53 @@ const (
 
 	// MessageResourceExists is the message used for Events when a resource
 	// fails to sync due to a Deployment already existing
-	MessageResourceExists = "Resource %q already exists and is not managed by Foo"
+	MessageResourceExists = "Resource %q already exists and is not managed by TrackPod"
 	// MessageResourceSynced is the message used for an Event fired when a Foo
 	// is synced successfully
-	MessageResourceSynced = "Foo synced successfully"
+	MessageResourceSynced = "TrackPod synced successfully"
 )
 
+// Controller implementation for TrackPod resources
+// TODO: Record events
 type Controller struct {
 	// K8s clientset
-	client kubernetes.Interface
+	kubeClient kubernetes.Interface
 	// things required for controller:
 	// - clientset for custom resource
-	klient klientset.Interface
+	tpodClient tClientSet.Interface
 	// - resource (informer) cache has synced
-	klusterSync cache.InformerSynced
+	tpodSync cache.InformerSynced
 	// - interface provided by informer
-	klister klientLister.TrackPodLister
-	// - queue (my theory: deltafifo)
+	tpodlister tLister.TrackPodLister
+	// - queue
+	// stores the work that has to be processed, instead of performing
+	// as soon as it's changed.
+	// Helps to ensure we only process a fixed amount of resources at a
+	// time, and makes it easy to ensure we are never processing the same item
+	// simultaneously in two different workers.
 	wq workqueue.RateLimitingInterface
-
-	// to list pods:
-	// podLister       corelisters.PodLister
-	// podListerSynced cache.InformerSynced
-
-	recorder record.EventRecorder
 }
 
-func NewController(client kubernetes.Interface, klient klientset.Interface, klusterInformer kInformer.TrackPodInformer) *Controller {
+// returns a new TrackPod controller
+func NewController(kubeClient kubernetes.Interface, tpodClient tClientSet.Interface, tpodInformer tInformer.TrackPodInformer) *Controller {
 	c := &Controller{
-		client:      client,
-		klient:      klient,
-		klusterSync: klusterInformer.Informer().HasSynced,
-		klister:     klusterInformer.Lister(),
-		wq:          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TrackPod"),
+		kubeClient: kubeClient,
+		tpodClient: tpodClient,
+		tpodSync:   tpodInformer.Informer().HasSynced,
+		tpodlister: tpodInformer.Lister(),
+		wq:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TrackPod"),
 	}
-	klusterInformer.Informer().AddEventHandler(
+
+	// event handler when the trackPod resources are added/deleted/updated.
+	tpodInformer.Informer().AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: c.handleAdd,
 			UpdateFunc: func(old, obj interface{}) {
+				oldTpod := old.(*v1.TrackPod)
+				newTpod := obj.(*v1.TrackPod)
+				if newTpod == oldTpod {
+					return
+				}
 				c.handleAdd(obj)
 			},
 			DeleteFunc: c.handleDel,
@@ -80,8 +88,12 @@ func NewController(client kubernetes.Interface, klient klientset.Interface, klus
 	return c
 }
 
+// Run will set up the event handlers for types we are interested in, as well
+// as syncing informer caches and starting workers. It will block until stopCh
+// is closed, at which point it will shutdown the workqueue and wait for
+// workers to finish processing their current work items.
 func (c *Controller) Run(ch chan struct{}) error {
-	if ok := cache.WaitForCacheSync(ch, c.klusterSync); !ok {
+	if ok := cache.WaitForCacheSync(ch, c.tpodSync); !ok {
 		log.Println("cache was not synced")
 	}
 	go wait.Until(c.worker, time.Second, ch)
@@ -89,11 +101,16 @@ func (c *Controller) Run(ch chan struct{}) error {
 	return nil
 }
 
+// worker is a long-running function that will continually call the
+// processNextWorkItem function in order to read and process a message on the
+// workqueue
 func (c *Controller) worker() {
 	for c.processNextItem() {
 	}
 }
 
+// processNextWorkItem will read a single work item off the workqueue and
+// attempt to process it, by calling the syncHandler.
 func (c *Controller) processNextItem() bool {
 	item, shutdown := c.wq.Get()
 	if shutdown {
@@ -114,7 +131,7 @@ func (c *Controller) processNextItem() bool {
 		return false
 	}
 
-	tpod, err := c.klister.TrackPods(ns).Get(name)
+	tpod, err := c.tpodlister.TrackPods(ns).Get(name)
 	if err != nil {
 		log.Printf("error %s, Getting the tpod resource from lister.", err.Error())
 		return false
@@ -130,7 +147,7 @@ func (c *Controller) processNextItem() bool {
 		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
 	}
 	// TODO: Prefer using podLister to reduce the call to K8s API.
-	pList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
+	pList, _ := c.kubeClient.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
 
 	if err := c.syncHandler(tpod, pList); err != nil {
 		log.Printf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
@@ -171,7 +188,7 @@ func (c *Controller) totalRunningPods(tpod *v1.TrackPod) int {
 		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
 	}
 	// TODO: Prefer using podLister to reduce the call to K8s API.
-	pList, _ := c.client.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
+	pList, _ := c.kubeClient.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
 
 	runningPods := 0
 	for _, pod := range pList.Items {
@@ -200,7 +217,7 @@ func (c *Controller) waitForPods(tpod *v1.TrackPod, pList *corev1.PodList) error
 
 // Updates the status section of TrackPod
 func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *corev1.PodList) error {
-	t, err := c.klient.AjV1().TrackPods(tpod.Namespace).Get(context.Background(), tpod.Name, metav1.GetOptions{})
+	t, err := c.tpodClient.AjV1().TrackPods(tpod.Namespace).Get(context.Background(), tpod.Name, metav1.GetOptions{})
 	trunningPods := c.totalRunningPods(tpod)
 	if err != nil {
 		return err
@@ -209,7 +226,7 @@ func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *cor
 	t.Status.Count = trunningPods
 	t.Status.Message = progress
 	fmt.Println("Inside updatestatus >>>>>>>>>>> ", t.Status.Message)
-	_, err = c.klient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
+	_, err = c.tpodClient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
 
 	return err
 }
@@ -245,7 +262,7 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	// TODO: Detect the manually created pod, and delete that specific pod.
 	if podDelete {
 		for i := 0; i < deleteIterate; i++ {
-			err := c.client.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
+			err := c.kubeClient.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
 			if err != nil {
 				log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
 				return err
@@ -258,7 +275,7 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	if podCreate {
 		// i := 0
 		for i := 0; i < iterate; i++ {
-			nPod, err := c.client.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
+			nPod, err := c.kubeClient.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
 			if err != nil {
 				if errors.IsAlreadyExists(err) {
 					// retry
