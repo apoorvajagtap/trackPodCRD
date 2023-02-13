@@ -161,14 +161,14 @@ func (c *Controller) processNextItem() bool {
 	// 	log.Printf("error %s, updating status of the TrackPod %s\n", err.Error(), tpod.Name)
 	// }
 
-	fmt.Println("calling wait for pods")
+	// fmt.Println("calling wait for pods")
 	// wait for pods to be ready
 	err = c.waitForPods(tpod, pList)
 	if err != nil {
 		log.Printf("error %s, waiting for pods to meet the expected state", err.Error())
 	}
 
-	fmt.Println("Calling update status again!!")
+	// fmt.Println("Calling update status again!!")
 	err = c.updateStatus(tpod, tpod.Spec.Message, pList)
 	if err != nil {
 		log.Printf("error %s updating status after waiting for Pods", err.Error())
@@ -199,38 +199,6 @@ func (c *Controller) totalRunningPods(tpod *v1.TrackPod) int {
 	return runningPods
 }
 
-// If the pod doesn't switch to a running state within 10 minutes, shall report the error.
-func (c *Controller) waitForPods(tpod *v1.TrackPod, pList *corev1.PodList) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	return poll.Wait(ctx, func(ctx context.Context) (bool, error) {
-		runningPods := c.totalRunningPods(tpod)
-		fmt.Println("Inside waitforPods ???? totalrunningPods >>>> ", runningPods)
-
-		if runningPods == tpod.Spec.Count {
-			return true, nil
-		}
-		return false, nil
-	})
-}
-
-// Updates the status section of TrackPod
-func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *corev1.PodList) error {
-	t, err := c.tpodClient.AjV1().TrackPods(tpod.Namespace).Get(context.Background(), tpod.Name, metav1.GetOptions{})
-	trunningPods := c.totalRunningPods(tpod)
-	if err != nil {
-		return err
-	}
-
-	t.Status.Count = trunningPods
-	t.Status.Message = progress
-	fmt.Println("Inside updatestatus >>>>>>>>>>> ", t.Status.Message)
-	_, err = c.tpodClient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
-
-	return err
-}
-
 // syncHandler monitors the current state & if current != desired,
 // tries to meet the desired state.
 func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error {
@@ -238,15 +206,15 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	iterate := tpod.Spec.Count
 	deleteIterate := 0
 	runningPods := c.totalRunningPods(tpod)
-	fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
-	fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
+	// fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
+	// fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
 
 	if runningPods < tpod.Spec.Count || tpod.Spec.Message != tpod.Status.Message {
-		if tpod.Spec.Message != tpod.Status.Message {
+		if runningPods > 0 && tpod.Spec.Message != tpod.Status.Message {
 			podDelete = true
 			podCreate = true
 			iterate = tpod.Spec.Count
-			deleteIterate = tpod.Spec.Count
+			deleteIterate = runningPods
 		} else {
 			log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, runningPods)
 			podCreate = true
@@ -261,6 +229,7 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	// Delete extra pod
 	// TODO: Detect the manually created pod, and delete that specific pod.
 	if podDelete {
+		fmt.Println("did we enter here??")
 		for i := 0; i < deleteIterate; i++ {
 			err := c.kubeClient.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
 			if err != nil {
@@ -273,12 +242,11 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 
 	// Creates pod
 	if podCreate {
-		// i := 0
 		for i := 0; i < iterate; i++ {
 			nPod, err := c.kubeClient.CoreV1().Pods(tpod.Namespace).Create(context.TODO(), newPod(tpod), metav1.CreateOptions{})
 			if err != nil {
 				if errors.IsAlreadyExists(err) {
-					// retry
+					// retry (might happen when the same named pod is created again)
 					iterate++
 				} else {
 					return err
@@ -329,6 +297,38 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 			},
 		},
 	}
+}
+
+// If the pod doesn't switch to a running state within 10 minutes, shall report.
+func (c *Controller) waitForPods(tpod *v1.TrackPod, pList *corev1.PodList) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	return poll.Wait(ctx, func(ctx context.Context) (bool, error) {
+		runningPods := c.totalRunningPods(tpod)
+		// fmt.Println("Inside waitforPods ???? totalrunningPods >>>> ", runningPods)
+
+		if runningPods == tpod.Spec.Count {
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+// Updates the status section of TrackPod
+func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *corev1.PodList) error {
+	t, err := c.tpodClient.AjV1().TrackPods(tpod.Namespace).Get(context.Background(), tpod.Name, metav1.GetOptions{})
+	trunningPods := c.totalRunningPods(tpod)
+	if err != nil {
+		return err
+	}
+
+	t.Status.Count = trunningPods
+	t.Status.Message = progress
+	// fmt.Println("Inside updatestatus >>>>>>>>>>> ", t.Status.Message)
+	_, err = c.tpodClient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
+
+	return err
 }
 
 func (c *Controller) handleAdd(obj interface{}) {

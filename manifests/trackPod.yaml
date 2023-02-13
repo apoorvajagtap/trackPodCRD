@@ -3,5 +3,5 @@ kind: TrackPod
 metadata:
   name: first-tpod
 spec: 
-  message: "new message 1"
+  message: "new message"
   count: 2
