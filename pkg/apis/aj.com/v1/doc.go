@@ -3,6 +3,6 @@
 
 // +k8s:deepcopy-gen=package
 // +k8s:defaulter-gen=TypeMeta
-// +groupName=aj.example.com
+// +groupName=aj.com
 
 package v1

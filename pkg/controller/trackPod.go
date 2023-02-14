@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -89,15 +90,26 @@ func NewController(kubeClient kubernetes.Interface, tpodClient tClientSet.Interf
 }
 
 // Run will set up the event handlers for types we are interested in, as well
-// as syncing informer caches and starting workers. It will block until stopCh
+// as syncing informer caches and starting workers. It will block until ch
 // is closed, at which point it will shutdown the workqueue and wait for
 // workers to finish processing their current work items.
 func (c *Controller) Run(ch chan struct{}) error {
+	defer c.wq.ShutDown()
+
+	// Start the informer factories to begin populating the informer caches
+	klog.Info("Starting the TrackPod controller")
+
+	// Wait for the caches to be synced before starting workers
 	if ok := cache.WaitForCacheSync(ch, c.tpodSync); !ok {
-		log.Println("cache was not synced")
+		log.Println("failed to wait for cache to sync")
 	}
+	// Launch the goroutine for workers to process the CR
+	klog.Info("Starting workers")
 	go wait.Until(c.worker, time.Second, ch)
+	klog.Info("Started workers")
 	<-ch
+	klog.Info("Shutting down the worker")
+
 	return nil
 }
 
@@ -114,26 +126,26 @@ func (c *Controller) worker() {
 func (c *Controller) processNextItem() bool {
 	item, shutdown := c.wq.Get()
 	if shutdown {
-		log.Println("Shutting down")
+		klog.Info("Shutting down")
 		return false
 	}
 
 	defer c.wq.Forget(item)
 	key, err := cache.MetaNamespaceKeyFunc(item)
 	if err != nil {
-		log.Printf("error while calling Namespace Key func on cache for item %s: %s", item, err.Error())
+		klog.Errorf("error while calling Namespace Key func on cache for item %s: %s", item, err.Error())
 		return false
 	}
 
 	ns, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		log.Printf("error while splitting key into namespace & name: %s", err.Error())
+		klog.Errorf("error while splitting key into namespace & name: %s", err.Error())
 		return false
 	}
 
 	tpod, err := c.tpodlister.TrackPods(ns).Get(name)
 	if err != nil {
-		log.Printf("error %s, Getting the tpod resource from lister.", err.Error())
+		klog.Errorf("error %s, Getting the tpod resource from lister.", err.Error())
 		return false
 	}
 
@@ -150,7 +162,7 @@ func (c *Controller) processNextItem() bool {
 	pList, _ := c.kubeClient.CoreV1().Pods(tpod.Namespace).List(context.TODO(), listOptions)
 
 	if err := c.syncHandler(tpod, pList); err != nil {
-		log.Printf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
+		klog.Errorf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
 		return false
 	}
 	// c.recorder.Event(tpod, corev1.EventTypeNormal, "Podcreation", "called SynHandler")
@@ -165,13 +177,13 @@ func (c *Controller) processNextItem() bool {
 	// wait for pods to be ready
 	err = c.waitForPods(tpod, pList)
 	if err != nil {
-		log.Printf("error %s, waiting for pods to meet the expected state", err.Error())
+		klog.Errorf("error %s, waiting for pods to meet the expected state", err.Error())
 	}
 
 	// fmt.Println("Calling update status again!!")
 	err = c.updateStatus(tpod, tpod.Spec.Message, pList)
 	if err != nil {
-		log.Printf("error %s updating status after waiting for Pods", err.Error())
+		klog.Errorf("error %s updating status after waiting for Pods", err.Error())
 	}
 
 	return true
@@ -209,34 +221,37 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	// fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
 	// fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
 
-	if runningPods < tpod.Spec.Count || tpod.Spec.Message != tpod.Status.Message {
+	if runningPods != tpod.Spec.Count || tpod.Spec.Message != tpod.Status.Message {
 		if runningPods > 0 && tpod.Spec.Message != tpod.Status.Message {
+			klog.Warningf("the message of TrackPod %v resource has been modified, recreating the pods\n", tpod.Name)
 			podDelete = true
 			podCreate = true
 			iterate = tpod.Spec.Count
 			deleteIterate = runningPods
 		} else {
-			log.Printf("detected mismatch of replica count for CR %v!!!! expected: %v & have: %v\n\n\n", tpod.Name, tpod.Spec.Count, runningPods)
-			podCreate = true
-			iterate = tpod.Spec.Count - runningPods
+			klog.Warningf("detected mismatch of replica count for CR %v >> expected: %v & have: %v\n\n", tpod.Name, tpod.Spec.Count, runningPods)
+			if runningPods < tpod.Spec.Count {
+				podCreate = true
+				iterate = tpod.Spec.Count - runningPods
+				klog.Infof("Creating %v new pods\n", iterate)
+			} else if runningPods > tpod.Spec.Count {
+				podDelete = true
+				deleteIterate = runningPods - tpod.Spec.Count
+				klog.Infof("Deleting %v extra pods\n", deleteIterate)
+			}
+
 		}
-	} else if runningPods > tpod.Spec.Count {
-		deleteIterate = runningPods - tpod.Spec.Count
-		log.Printf("Deleting %v extra pods\n", deleteIterate)
-		podDelete = true
 	}
 
 	// Delete extra pod
 	// TODO: Detect the manually created pod, and delete that specific pod.
 	if podDelete {
-		fmt.Println("did we enter here??")
 		for i := 0; i < deleteIterate; i++ {
 			err := c.kubeClient.CoreV1().Pods(tpod.Namespace).Delete(context.TODO(), pList.Items[i].Name, metav1.DeleteOptions{})
 			if err != nil {
-				log.Printf("Pod deletion failed for CR %v\n", tpod.Name)
+				klog.Errorf("Pod deletion failed for CR %v\n", tpod.Name)
 				return err
 			}
-			fmt.Println()
 		}
 	}
 
@@ -249,11 +264,12 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 					// retry (might happen when the same named pod is created again)
 					iterate++
 				} else {
+					klog.Errorf("Pod creation failed for CR %v\n", tpod.Name)
 					return err
 				}
 			}
 			if nPod.Name != "" {
-				log.Printf("Pod %v created successfully!\n", nPod.Name)
+				klog.Infof("Pod %v created successfully!\n", nPod.Name)
 			}
 		}
 	}
@@ -291,7 +307,7 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 					},
 					Args: []string{
 						"-c",
-						"while true; do echo '$(MESSAGE)'; sleep 10; done",
+						"while true; do echo '$(MESSAGE)'; sleep 100; done",
 					},
 				},
 			},
@@ -332,11 +348,11 @@ func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *cor
 }
 
 func (c *Controller) handleAdd(obj interface{}) {
-	log.Println("handleAdd is here!!!")
+	klog.Info("handleAdd is here!!!")
 	c.wq.Add(obj)
 }
 
 func (c *Controller) handleDel(obj interface{}) {
-	log.Println("handleDel is here!!")
+	klog.Info("handleDel is here!!")
 	c.wq.Done(obj)
 }

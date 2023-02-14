@@ -31,7 +31,7 @@ type AjV1Interface interface {
 	TrackPodsGetter
 }
 
-// AjV1Client is used to interact with features provided by the aj.example.com group.
+// AjV1Client is used to interact with features provided by the aj.com group.
 type AjV1Client struct {
 	restClient rest.Interface
 }

@@ -4,13 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/klog/v2"
 
 	klient "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
 	kInfFac "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions"
@@ -33,30 +33,30 @@ func main() {
 
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
-		log.Printf("Building config from flags failed, %s, trying to build inclusterconfig", err.Error())
+		klog.Errorf("Building config from flags failed, %s, trying to build inclusterconfig", err.Error())
 		config, err = rest.InClusterConfig()
 		if err != nil {
-			log.Printf("error %s building inclusterconfig", err.Error())
+			klog.Errorf("error %s building inclusterconfig", err.Error())
 		}
 	}
 
 	// creating the clientset
 	klientset, err := klient.NewForConfig(config)
 	if err != nil {
-		log.Printf("getting klient set %s\n", err.Error())
+		klog.Errorf("getting klient set %s\n", err.Error())
 	}
-	fmt.Println(klientset)
+	// fmt.Println(klientset)
 
 	tpods, err := klientset.AjV1().TrackPods("").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		log.Printf("error while listing trackPods %s\n", err.Error())
+		klog.Errorf("error while listing trackPods %s\n", err.Error())
 	}
 	fmt.Println(tpods)
-	fmt.Printf("total trackPod sets: %d\n", len(tpods.Items))
+	// fmt.Printf("total trackPod sets: %d\n", len(tpods.Items))
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Printf("getting std client %s\n", err.Error())
+		klog.Errorf("getting std client %s\n", err.Error())
 	}
 
 	infoFact := kInfFac.NewSharedInformerFactory(klientset, 20*time.Minute)
@@ -65,6 +65,6 @@ func main() {
 
 	infoFact.Start(ch)
 	if err := c.Run(ch); err != nil {
-		log.Printf("error running controller %s\n", err)
+		klog.Errorf("error running controller %s\n", err)
 	}
 }
