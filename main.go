@@ -31,9 +31,12 @@ func main() {
 	}
 	flag.Parse()
 
+	// Building config from flags might fail inside the pod,
+	// hence adding the code for usage of in-clusterconfig.
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		klog.Errorf("Building config from flags failed, %s, trying to build inclusterconfig", err.Error())
+		// uses serviceAccount mounted inside the pod.
 		config, err = rest.InClusterConfig()
 		if err != nil {
 			klog.Errorf("error %s building inclusterconfig", err.Error())
