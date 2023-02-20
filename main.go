@@ -50,6 +50,7 @@ func main() {
 	}
 	// fmt.Println(klientset)
 
+	// Listing the existing trackpods.
 	tpods, err := klientset.AjV1().TrackPods("").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		klog.Errorf("error while listing trackPods %s\n", err.Error())

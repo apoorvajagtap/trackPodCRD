@@ -165,15 +165,7 @@ func (c *Controller) processNextItem() bool {
 		klog.Errorf("Error while syncing the current vs desired state for TrackPod %v: %v\n", tpod.Name, err.Error())
 		return false
 	}
-	// c.recorder.Event(tpod, corev1.EventTypeNormal, "Podcreation", "called SynHandler")
 
-	// fmt.Println("Calling updateStatus now!!")
-	// err = c.updateStatus(tpod, "creating", pList)
-	// if err != nil {
-	// 	log.Printf("error %s, updating status of the TrackPod %s\n", err.Error(), tpod.Name)
-	// }
-
-	// fmt.Println("calling wait for pods")
 	// wait for pods to be ready
 	err = c.waitForPods(tpod, pList)
 	if err != nil {
@@ -218,16 +210,16 @@ func (c *Controller) syncHandler(tpod *v1.TrackPod, pList *corev1.PodList) error
 	iterate := tpod.Spec.Count
 	deleteIterate := 0
 	runningPods := c.totalRunningPods(tpod)
-	// fmt.Println("Inside syncHandler >>>>>>>>>>>>>>>>>>>>> runningPods ----> ", runningPods)
-	// fmt.Println("======================> tpod.Count ::: ", tpod.Spec.Count)
 
 	if runningPods != tpod.Spec.Count || tpod.Spec.Message != tpod.Status.Message {
-		if runningPods > 0 && tpod.Spec.Message != tpod.Status.Message {
+		if tpod.Spec.Message != tpod.Status.Message {
 			klog.Warningf("the message of TrackPod %v resource has been modified, recreating the pods\n", tpod.Name)
-			podDelete = true
 			podCreate = true
 			iterate = tpod.Spec.Count
-			deleteIterate = runningPods
+			if runningPods > 0 {
+				podDelete = true
+				deleteIterate = c.totalRunningPods(tpod)
+			}
 		} else {
 			klog.Warningf("detected mismatch of replica count for CR %v >> expected: %v & have: %v\n\n", tpod.Name, tpod.Spec.Count, runningPods)
 			if runningPods < tpod.Spec.Count {
@@ -341,7 +333,6 @@ func (c *Controller) updateStatus(tpod *v1.TrackPod, progress string, pList *cor
 
 	t.Status.Count = trunningPods
 	t.Status.Message = progress
-	// fmt.Println("Inside updatestatus >>>>>>>>>>> ", t.Status.Message)
 	_, err = c.tpodClient.AjV1().TrackPods(tpod.Namespace).UpdateStatus(context.Background(), t, metav1.UpdateOptions{})
 
 	return err
