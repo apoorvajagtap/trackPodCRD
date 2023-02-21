@@ -6,8 +6,8 @@ Steps to build and run:
 ```
 $ git clone git@github.com:apoorvajagtap/trackPodCRD.git
 $ cd trackPodCRD
-$ go build -o main .
-$ ./main
+$ make build
+$ bin/main
 ```
 
 3. Now, on a different terminal, create the required resources (CRD & CR).
