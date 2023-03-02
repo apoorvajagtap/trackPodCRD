@@ -20,8 +20,8 @@ package fake
 
 import (
 	clientset "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
-	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/aj.com/v1"
-	fakeajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/aj.com/v1/fake"
+	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/trackpod/v1"
+	fakeajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/trackpod/v1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"

@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
+	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/trackpod/v1"
 	tClientSet "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
 	tInformer "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com/v1"
 	tLister "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"

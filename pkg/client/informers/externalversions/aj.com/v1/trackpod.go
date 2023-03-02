@@ -22,7 +22,7 @@ import (
 	"context"
 	time "time"
 
-	ajcomv1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
+	ajcomv1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/trackpod/v1"
 	versioned "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
 	internalinterfaces "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/internalinterfaces"
 	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/listers/aj.com/v1"

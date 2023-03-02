@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
-	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/aj.com/v1"
+	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned/typed/trackpod/v1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

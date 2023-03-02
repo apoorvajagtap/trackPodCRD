@@ -19,7 +19,7 @@ limitations under the License.
 package fake
 
 import (
-	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
+	ajv1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/trackpod/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
