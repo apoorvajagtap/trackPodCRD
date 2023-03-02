@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
-	"strconv"
 	"time"
 
 	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
@@ -276,9 +274,10 @@ func newPod(tpod *v1.TrackPod) *corev1.Pod {
 	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels:    labels,
-			Name:      fmt.Sprintf(tpod.Name + "-" + strconv.Itoa(rand.Intn(10000000))),
-			Namespace: tpod.Namespace,
+			Labels: labels,
+			// Name:      fmt.Sprintf(tpod.Name + "-" + strconv.Itoa(rand.Intn(10000000))),
+			GenerateName: fmt.Sprintf("%s-", tpod.Name),
+			Namespace:    tpod.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tpod, v1.SchemeGroupVersion.WithKind("TrackPod")),
 			},
