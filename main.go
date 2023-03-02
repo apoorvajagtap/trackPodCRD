@@ -17,7 +17,6 @@ import (
 	"github.com/apoorvajagtap/trackPodCRD/pkg/controller"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	_ "k8s.io/code-generator"
 )
 
 func main() {
