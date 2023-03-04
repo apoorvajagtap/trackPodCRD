@@ -14,7 +14,7 @@ import (
 
 	klient "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
 	kInfFac "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions"
-	"github.com/apoorvajagtap/trackPodCRD/pkg/controller"
+	"github.com/apoorvajagtap/trackPodCRD/pkg/controller/pipelinerun"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -64,11 +64,13 @@ func main() {
 	}
 
 	infoFact := kInfFac.NewSharedInformerFactory(klientset, 20*time.Minute)
+	// infoFact :=
 	ch := make(chan struct{})
-	c := controller.NewController(client, klientset, infoFact.Aj().V1().TrackPods())
+	// c := trackpod.NewController(client, klientset, infoFact.Aj().V1().TrackPods())
+	pc := pipelinerun.NewController(client, klientset, infoFact.Aj().V1alpha1().PipelineRuns(), infoFact.Aj().V1alpha1().TaskRuns())
 
 	infoFact.Start(ch)
-	if err := c.Run(ch); err != nil {
+	if err := pc.Run(ch); err != nil {
 		klog.Errorf("error running controller %s\n", err)
 	}
 }
