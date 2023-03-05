@@ -9,7 +9,7 @@ Help()
     echo -e "\nhack/setup.sh arg1 arg2, where;"
     echo -e "arg1 = path to cloned repo (pass '.' if pwd == cloned_repo)."
     echo -e "arg2 = any of the options ('all' or 'crd' or 'cr')"
-    echo -e "\nFor example; hack/setup.sh . all"
+    echo -e "\nFor example; hack/setup_trackpod.sh . all"
     exit 1
 }
 
