@@ -1,0 +1,7 @@
+apiVersion: aj.com/v1alpha1
+kind: PipelineRun
+metadata:
+  name: second-prun
+spec: 
+  message: "second message"
+  count: 1

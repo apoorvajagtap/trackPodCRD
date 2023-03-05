@@ -21,7 +21,8 @@ package externalversions
 import (
 	"fmt"
 
-	v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/aj.com/v1"
+	v1alpha1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/pipeline/v1alpha1"
+	// v1 "github.com/apoorvajagtap/trackPodCRD/pkg/apis/trackpod/v1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -53,8 +54,14 @@ func (f *genericInformer) Lister() cache.GenericLister {
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
 	// Group=aj.com, Version=v1
-	case v1.SchemeGroupVersion.WithResource("trackpods"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Aj().V1().TrackPods().Informer()}, nil
+	// case v1.SchemeGroupVersion.WithResource("trackpods"):
+	// 	return &genericInformer{resource: resource.GroupResource(), informer: f.Aj().V1().TrackPods().Informer()}, nil
+
+		// Group=aj.com, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("pipelineruns"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Aj().V1alpha1().PipelineRuns().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("taskruns"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Aj().V1alpha1().TaskRuns().Informer()}, nil
 
 	}
 

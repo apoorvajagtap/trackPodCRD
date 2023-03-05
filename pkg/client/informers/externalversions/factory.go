@@ -24,8 +24,9 @@ import (
 	time "time"
 
 	versioned "github.com/apoorvajagtap/trackPodCRD/pkg/client/clientset/versioned"
-	ajcom "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/aj.com"
 	internalinterfaces "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/internalinterfaces"
+	pipeline "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/pipeline"
+	// trackpod "github.com/apoorvajagtap/trackPodCRD/pkg/client/informers/externalversions/trackpod"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -243,9 +244,14 @@ type SharedInformerFactory interface {
 	// client.
 	InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer
 
-	Aj() ajcom.Interface
+	Aj() pipeline.Interface
+	// Aj() trackpod.Interface
 }
 
-func (f *sharedInformerFactory) Aj() ajcom.Interface {
-	return ajcom.New(f, f.namespace, f.tweakListOptions)
+func (f *sharedInformerFactory) Aj() pipeline.Interface {
+	return pipeline.New(f, f.namespace, f.tweakListOptions)
 }
+
+// func (f *sharedInformerFactory) Aj() trackpod.Interface {
+// 	return trackpod.New(f, f.namespace, f.tweakListOptions)
+// }
